@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ValidationAgent } from "../src/validation.ts";
+import { PatchValidator } from "../src/validation.ts";
 const actual = promisify(execFile);
 const patch = "--- a/a.js\n+++ b/a.js\n@@ -1,1 +1,1 @@\n-var a = 1;\n+const a = 1;\n";
 for (const state of ["passed", "failed", "unavailable", "malformed"] as const) {
@@ -25,8 +25,8 @@ for (const state of ["passed", "failed", "unavailable", "malformed"] as const) {
       }
       return { stdout: "", stderr: "" };
     }) as typeof actual;
-    const agent = new ValidationAgent("example@sha256:" + "a".repeat(64), execute);
-    const result = await agent.run({ "a.js": "const a = 1;\n" }, { "a.js": "var a = 1;\n" }, patch, "a".repeat(40));
+    const validator = new PatchValidator("example@sha256:" + "a".repeat(64), execute);
+    const result = await validator.run({ "a.js": "const a = 1;\n" }, { "a.js": "var a = 1;\n" }, patch, "a".repeat(40));
     assert.equal(result.status, state === "passed" ? "passed" : "failed");
     assert.ok(calls[0].includes("--network=none")); assert.ok(calls[0].includes("--read-only"));
     assert.equal(calls.at(-1)?.[0], "rm");
@@ -37,6 +37,6 @@ test("unavailable Docker fails validation and retains patch check details", asyn
     if (command === "git") return actual(command, args, options);
     throw new Error("Docker is unavailable");
   }) as typeof actual;
-  const result = await new ValidationAgent("image", execute).run({ "a.js": "const a = 1;\n" }, { "a.js": "var a = 1;\n" }, patch, "a".repeat(40));
+  const result = await new PatchValidator("image", execute).run({ "a.js": "const a = 1;\n" }, { "a.js": "var a = 1;\n" }, patch, "a".repeat(40));
   assert.equal(result.status, "failed"); assert.equal(result.checks[0].status, "passed");
 });

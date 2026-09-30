@@ -11,7 +11,8 @@ const reportSchema = z.object({ checks: z.array(z.object({ name: z.enum(["lint",
   status: z.enum(["passed", "failed", "unavailable"]), details: z.string().max(12000) }).strict()).length(3) }).strict();
 
 /** Executes only an administrator-selected immutable image, with no service secrets or network. */
-export class ValidationAgent {
+/** Trusted deterministic validator used by DeliveryAgent; it is not an AI agent. */
+export class PatchValidator {
   image: string;
   execute: typeof run;
   constructor(image: string, execute: typeof run = run) { this.image = image; this.execute = execute; }

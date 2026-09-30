@@ -2,21 +2,24 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { FixJob, PullRequestContext } from "./contracts.ts";
-import type { DataCollectionAgent, PullRequestAgent } from "./agents.ts";
-import type { FindingAnalysisAgent, TechnicalDebtAgent, CodeSuggestionAgent, CodeFixAgent } from "./model.ts";
-import type { ValidationAgent } from "./validation.ts";
+import type { ContextLoader, DeliveryAgent } from "./agents.ts";
+import type { ReviewAgent, FixAgent } from "./model.ts";
 import { applyEdits, patchDigest } from "./patch.ts";
 import { ServiceError, publicError } from "./errors.ts";
 
 interface StoredJob { job: FixJob; context?: PullRequestContext; files?: Record<string, string> }
-export interface Agents { collect: DataCollectionAgent; analyze: FindingAnalysisAgent; debt: TechnicalDebtAgent;
-  suggest: CodeSuggestionAgent; fix: CodeFixAgent; validate: ValidationAgent; pr: PullRequestAgent }
+export interface WorkflowDependencies {
+  loader: ContextLoader;
+  review: ReviewAgent;
+  fix: FixAgent;
+  delivery: DeliveryAgent;
+}
 export class Jobs {
   directory: string;
-  agents: Agents;
+  workflow: WorkflowDependencies;
   records = new Map<string, StoredJob>();
   busy = new Set<string>();
-  constructor(directory: string, agents: Agents) { this.directory = directory; this.agents = agents; }
+  constructor(directory: string, workflow: WorkflowDependencies) { this.directory = directory; this.workflow = workflow; }
   async init() {
     await mkdir(this.directory, { recursive: true });
     for (const file of await readdir(this.directory)) {
@@ -70,7 +73,7 @@ export class Jobs {
   async generate(record: StoredJob) {
     const j = record.job;
     j.status = "collecting";
-    const context = await this.agents.collect.run(j.owner, j.repository, j.pullRequestNumber);
+    const context = await this.workflow.loader.run(j.owner, j.repository, j.pullRequestNumber);
     if (context.headSha !== j.headSha) throw new ServiceError(409, "stale_commit", "The PR commit changed. Refresh the analysis before generating fixes.");
     record.context = context;
     j.sourceBranch = context.sourceBranch; j.targetBranch = context.sourceBranch;
@@ -81,12 +84,10 @@ export class Jobs {
     const relevantFiles = Object.fromEntries([...new Set(selected.map(f => f.file))].filter(f => Object.hasOwn(context.files, f)).map(f => [f, context.files[f]]));
     const limited = { ...context, files: relevantFiles, findings: selected };
     j.status = "generating_suggestion";
-    const triage = await this.agents.analyze.run(limited);
-    const debt = await this.agents.debt.run(limited, triage);
-    j.suggestions = await this.agents.suggest.run(limited, triage, debt);
+    j.suggestions = await this.workflow.review.run(limited);
     if (!j.selectedFindingIds.length) { j.status = "patch_ready"; return; }
     if (j.suggestions.some(s => !s.fixAvailable)) throw new ServiceError(422, "fix_unavailable", "A selected finding cannot be safely fixed within its reported line range.");
-    const edits = await this.agents.fix.run(limited, j.suggestions);
+    const edits = await this.workflow.fix.run(limited, j.suggestions);
     let result;
     try { result = applyEdits(context.files, context.findings, j.selectedFindingIds, edits); }
     catch { throw new ServiceError(422, "invalid_patch", "The generated patch failed scope or source checks. No source was changed."); }
@@ -104,7 +105,7 @@ export class Jobs {
     if (action === "validate") {
       j.status = "validating"; j.error = null;
       this.launch(record, async () => {
-        j.validation = await this.agents.validate.run(record.files!, record.context!.files, j.patch!, j.headSha);
+        j.validation = await this.workflow.delivery.validate(record.files!, record.context!.files, j.patch!, j.headSha);
         j.status = j.validation.status === "passed" ? "validation_succeeded" : "validation_failed";
       });
     } else {
@@ -113,7 +114,7 @@ export class Jobs {
       }
       j.status = "creating_pull_request"; j.error = null;
       this.launch(record, async () => {
-        const result = await this.agents.pr.run(record.context!, record.files!, j.id, j.validation!.patchDigest);
+        const result = await this.workflow.delivery.publish(record.context!, record.files!, j.id, j.validation!.patchDigest);
         j.fixBranch = result.branch; j.commitSha = result.sha ?? null; j.createdPullRequestNumber = result.number;
         j.pullRequestUrl = result.html_url; j.status = "pull_request_created";
       });

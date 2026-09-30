@@ -5,12 +5,16 @@ Independent multi-agent service for the Automated Code Review and Technical Debt
 ## Implemented flow
 
 1. The signed-in dashboard user selects an analysed PR and its commit.
-2. DataCollectionAgent reads PR metadata/source through a GitHub App and reads both PostgreSQL databases directly with read-only sessions.
-3. FindingAnalysisAgent classifies findings; TechnicalDebtAgent prioritizes them; CodeSuggestionAgent produces schema-validated explanations and corrections.
-4. CodeFixAgent generates exact line replacements for selected findings. The service checks the scope and original text, and generates the unified diff itself.
-5. ValidationAgent checks Git patch application and runs an immutable Docker validation image without network access, service credentials, or a Docker socket. The patch is mounted read-only; the runner works in temporary storage.
-6. PullRequestAgent creates a deterministic `ai-fixes/<original-pr>/<job-id>` branch and a separate fix PR **targeting the original PR's source branch**. This keeps the fix PR focused on the selected changes. It never pushes to the original branch. Main, master and the default branch cannot be fix targets.
+2. The deterministic ContextLoader reads PR metadata/source through a GitHub App and reads both PostgreSQL databases directly with read-only sessions.
+3. ReviewAgent uses one model call to classify findings, add technical-debt context, prioritize them, and produce schema-validated explanations and suggested corrections.
+4. FixAgent uses a second model call to generate exact line replacements for selected findings. The service checks the scope and original text, and generates the unified diff itself.
+5. DeliveryAgent uses deterministic code to validate Git patch application in an immutable Docker image without network access, service credentials, or a Docker socket. The patch is mounted read-only; the runner works in temporary storage.
+6. After validation, DeliveryAgent creates a deterministic `ai-fixes/<original-pr>/<job-id>` branch and a separate fix PR **targeting the original PR's source branch**. This keeps the fix PR focused on the selected changes. It never pushes to the original branch. Main, master and the default branch cannot be fix targets.
 7. A project manager or administrator may explicitly confirm a merge from AI Code Fixing. The service checks source/fix commit identities and delegates the merge to GitHub, which enforces the App's permissions and branch protection. Configure the App without protection bypass rights. There is no automatic merging.
+
+### Agent design
+
+The workflow has three agents: ReviewAgent, FixAgent and DeliveryAgent. Only the first two call the AI provider, so a fix job normally uses two model requests instead of four. Data loading, schema checks, patch construction, authorization, persistence and GitHub access remain deterministic support code managed by the Jobs orchestrator. This keeps validation independent from model judgment while reducing latency, token usage and orchestration complexity.
 
 ## Setup
 

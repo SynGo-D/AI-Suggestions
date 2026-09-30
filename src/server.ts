@@ -7,9 +7,9 @@ import { readConfig } from "./config.ts";
 import { Databases } from "./database.ts";
 import { GitHub } from "./github.ts";
 import { Authorizer } from "./auth.ts";
-import { DataCollectionAgent, PullRequestAgent } from "./agents.ts";
-import { Model, FindingAnalysisAgent, TechnicalDebtAgent, CodeSuggestionAgent, CodeFixAgent } from "./model.ts";
-import { ValidationAgent } from "./validation.ts";
+import { ContextLoader, DeliveryAgent } from "./agents.ts";
+import { Model, ReviewAgent, FixAgent } from "./model.ts";
+import { PatchValidator } from "./validation.ts";
 import { Jobs } from "./jobs.ts";
 import { ServiceError, publicError } from "./errors.ts";
 
@@ -22,9 +22,12 @@ async function main() {
   const config = readConfig(process.env);
   const db = new Databases(config); await db.check();
   const github = new GitHub(config); const model = new Model(config); const auth = new Authorizer(config);
-  const jobs = new Jobs(config.JOB_DIRECTORY, { collect: new DataCollectionAgent(db, github),
-    analyze: new FindingAnalysisAgent(model), debt: new TechnicalDebtAgent(model), suggest: new CodeSuggestionAgent(model),
-    fix: new CodeFixAgent(model), validate: new ValidationAgent(config.VALIDATOR_IMAGE), pr: new PullRequestAgent(github) });
+  const jobs = new Jobs(config.JOB_DIRECTORY, {
+    loader: new ContextLoader(db, github),
+    review: new ReviewAgent(model),
+    fix: new FixAgent(model),
+    delivery: new DeliveryAgent(github, new PatchValidator(config.VALIDATOR_IMAGE)),
+  });
   await jobs.init();
   const lockPath = join(config.JOB_DIRECTORY, "worker.lock");
   const lock = await open(lockPath, "wx");
