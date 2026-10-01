@@ -1,0 +1,14 @@
+.git
+.gitignore
+node_modules
+.env
+.env.*
+!.env.example
+coverage/
+data/
+*.pem
+*.key
+test/
+validator/
+eslint.config.js
+README.md

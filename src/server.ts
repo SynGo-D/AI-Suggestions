@@ -80,7 +80,7 @@ async function main() {
     }
   });
   server.requestTimeout = 60_000;
-  server.listen(Number(config.PORT), "127.0.0.1", () => console.log(`AI-Suggestions listening on port ${config.PORT}`));
+  server.listen(Number(config.PORT), config.HOST, () => console.log(`AI-Suggestions listening on ${config.HOST}:${config.PORT}`));
   const stop = () => server.close(() => { void (async () => {
     await db.close(); await lock.close(); await unlink(lockPath); process.exit(0);
   })(); });
