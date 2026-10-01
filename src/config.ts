@@ -1,4 +1,4 @@
-const required = ["TECHNICAL_DEBT_DATABASE_URL", "ANALYSIS_DATABASE_URL", "GITHUB_API_URL",
+const required = ["ANALYSIS_DATABASE_URL", "GITHUB_API_URL",
   "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_PRIVATE_KEY_PATH", "AI_PROVIDER_API_KEY",
   "AI_PROVIDER_BASE_URL", "AI_PROVIDER_MODEL", "INTERNAL_SERVICE_TOKEN", "MAIN_BACKEND_URL",
   "DEBT_TABLE", "DEBT_REPOSITORY_COLUMN", "DEBT_PR_COLUMN", "DEBT_COMMIT_COLUMN",
@@ -7,8 +7,8 @@ export type Config = Record<typeof required[number], string> & { PORT: string; J
 export function readConfig(env: NodeJS.ProcessEnv): Config {
   const missing = required.filter(key => !env[key]?.trim() || env[key]?.includes("<"));
   if (missing.length) throw new Error(`Configure required values: ${missing.join(", ")}`);
-  for (const key of ["TECHNICAL_DEBT_DATABASE_URL", "ANALYSIS_DATABASE_URL"]) {
-    if (!/^postgres(ql)?:\/\//.test(env[key]!)) throw new Error(`${key} must be a PostgreSQL URL`);
+  if (!/^postgres(ql)?:\/\//.test(env.ANALYSIS_DATABASE_URL!)) {
+    throw new Error("ANALYSIS_DATABASE_URL must be a PostgreSQL URL");
   }
   for (const key of ["GITHUB_API_URL", "AI_PROVIDER_BASE_URL", "MAIN_BACKEND_URL"]) {
     const url = new URL(env[key]!);

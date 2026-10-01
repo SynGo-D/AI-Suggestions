@@ -29,6 +29,13 @@ test("model output requires bounded confidence and known fields", () => {
 test("missing credentials are reported by name without their values", () => {
   assert.throws(() => readConfig({}), /ANALYSIS_DATABASE_URL/);
   assert.throws(() => readConfig({ ANALYSIS_DATABASE_URL: "<placeholder>" }), /ANALYSIS_DATABASE_URL/);
+  const config = readConfig({ ANALYSIS_DATABASE_URL: "postgresql://localhost/shared", GITHUB_API_URL: "https://api.github.com",
+    GITHUB_APP_ID: "app", GITHUB_INSTALLATION_ID: "installation", GITHUB_PRIVATE_KEY_PATH: "private-key.pem",
+    AI_PROVIDER_API_KEY: "key", AI_PROVIDER_BASE_URL: "https://example.com", AI_PROVIDER_MODEL: "model",
+    INTERNAL_SERVICE_TOKEN: "a".repeat(32), MAIN_BACKEND_URL: "http://localhost:5000", DEBT_TABLE: "debt_records",
+    DEBT_REPOSITORY_COLUMN: "repository", DEBT_PR_COLUMN: "pr", DEBT_COMMIT_COLUMN: "sha",
+    VALIDATOR_IMAGE: `validator@sha256:${"a".repeat(64)}` });
+  assert.equal(config.ANALYSIS_DATABASE_URL, "postgresql://localhost/shared");
 });
 test("unauthorized requests never reach a repository dependency", async () => {
   const auth = new Authorizer({ MAIN_BACKEND_URL: "https://example.invalid" } as Config);

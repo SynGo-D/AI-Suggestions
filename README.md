@@ -5,11 +5,11 @@ Independent multi-agent service for the Automated Code Review and Technical Debt
 ## Implemented flow
 
 1. The signed-in dashboard user selects an analysed PR and its commit.
-2. The deterministic ContextLoader reads PR metadata/source through a GitHub App and reads both PostgreSQL databases directly with read-only sessions.
-3. ReviewAgent uses one model call to classify findings, add technical-debt context, prioritize them, and produce schema-validated explanations and suggested corrections.
-4. FixAgent uses a second model call to generate exact line replacements for selected findings. The service checks the scope and original text, and generates the unified diff itself.
-5. DeliveryAgent uses deterministic code to validate Git patch application in an immutable Docker image without network access, service credentials, or a Docker socket. The patch is mounted read-only; the runner works in temporary storage.
-6. After validation, DeliveryAgent creates a deterministic `ai-fixes/<original-pr>/<job-id>` branch and a separate fix PR **targeting the original PR's source branch**. This keeps the fix PR focused on the selected changes. It never pushes to the original branch. Main, master and the default branch cannot be fix targets.
+2. DataCollectionAgent reads PR metadata/source through a GitHub App and reads analysis and technical-debt records from one PostgreSQL database using a read-only transaction.
+3. FindingAnalysisAgent classifies findings; TechnicalDebtAgent prioritizes them; CodeSuggestionAgent produces schema-validated explanations and corrections.
+4. CodeFixAgent generates exact line replacements for selected findings. The service checks the scope and original text, and generates the unified diff itself.
+5. ValidationAgent checks Git patch application and runs an immutable Docker validation image without network access, service credentials, or a Docker socket. The patch is mounted read-only; the runner works in temporary storage.
+6. PullRequestAgent creates a deterministic `ai-fixes/<original-pr>/<job-id>` branch and a separate fix PR **targeting the original PR's source branch**. This keeps the fix PR focused on the selected changes. It never pushes to the original branch. Main, master and the default branch cannot be fix targets.
 7. A project manager or administrator may explicitly confirm a merge from AI Code Fixing. The service checks source/fix commit identities and delegates the merge to GitHub, which enforces the App's permissions and branch protection. Configure the App without protection bypass rights. There is no automatic merging.
 
 ### Agent design
@@ -18,7 +18,7 @@ The workflow has three agents: ReviewAgent, FixAgent and DeliveryAgent. Only the
 
 ## Setup
 
-Requires Node.js 22.21+ (22.22.2+ recommended for the UI's jsdom), Git, Docker with Linux containers, two PostgreSQL databases, a GitHub App installation, and an OpenAI-compatible chat-completions provider. No provider-specific SDK is required.
+Requires Node.js 22.21+ (22.22.2+ recommended for the UI's jsdom), Git, Docker with Linux containers, one PostgreSQL database containing both analysis and technical-debt data, a GitHub App installation, and an OpenAI-compatible chat-completions provider. No provider-specific SDK is required.
 
 ```powershell
 npm.cmd ci
@@ -31,8 +31,7 @@ Never commit `.env`, private keys or `data/`. The example contains placeholders 
 
 | Configuration | Meaning |
 | --- | --- |
-| `ANALYSIS_DATABASE_URL` | Read-only PostgreSQL connection to analysis-engine tables |
-| `TECHNICAL_DEBT_DATABASE_URL` | Read-only PostgreSQL connection to debt records |
+| `ANALYSIS_DATABASE_URL` | Read-only PostgreSQL connection to the shared analysis and technical-debt database |
 | `DEBT_TABLE` | Actual debt table name; simple SQL identifier |
 | `DEBT_REPOSITORY_COLUMN` | Column containing `owner/repository` |
 | `DEBT_PR_COLUMN` | Column containing the PR number |
@@ -48,13 +47,13 @@ Never commit `.env`, private keys or `data/`. The example contains placeholders 
 | `PORT` | Default 8010, bound to loopback; expose through a trusted reverse proxy when needed |
 | `JOB_DIRECTORY` | Default `data/jobs`; private persistent storage |
 
-The App needs repository contents read/write and pull requests read/write. Give database users SELECT permission only; the client additionally enables `default_transaction_read_only`. SQL values are parameterized.
+The App needs repository contents read/write and pull requests read/write. Give the database user SELECT permission only; the client additionally enables `default_transaction_read_only`. SQL values are parameterized.
 
 ## Database mapping and outstanding integration
 
 The analysis adapter matches `analysis-engine-service/src/analysis_engine/repositories/analysis_result_repository.py`: `analysis_results` and `findings`, including `end_line`, JSONB `metadata`, metrics and change-set data. Only a completed result for the requested repository, PR and exact head commit is used.
 
-**The technical-debt schema has not yet been supplied.** The current configurable adapter expects a PostgreSQL table with repository, PR and commit columns, and reads its matching metric records. Supply the real schema before enabling production use. If debt data uses a different database engine, joins, JSON layout or repository identifier, adapt `src/database.ts` to that verified contract; do not invent a table or substitute example metrics. Missing debt records prevent generation.
+**The technical-debt schema has not yet been supplied.** The current configurable adapter expects the shared PostgreSQL database to contain a debt table with repository, PR and commit columns, and reads its matching metric records. Supply the real schema before enabling production use. If debt data uses joins, a different JSON layout or repository identifier, adapt `src/database.ts` to that verified contract; do not invent a table or substitute example metrics. Missing debt records prevent generation.
 
 No live database/model/GitHub end-to-end verification has been performed without these credentials and settings. Existing analysis in the dashboard remains usable while AI configuration is unavailable.
 
