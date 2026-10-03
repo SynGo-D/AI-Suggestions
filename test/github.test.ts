@@ -48,3 +48,42 @@ test("protected fix targets are refused", async () => {
   await assert.rejects(github.createFix({ ...context, sourceBranch: "main" }, {}, "job", "digest"), /cannot target/);
   assert.ok(calls.every(c => c.method === "GET"));
 });
+test("repository snapshots include only safe UTF-8 source files", async () => {
+  const { github, calls } = fixture();
+  github.request = async (path) => {
+    calls.push({ path, method: "GET", body: undefined });
+    if (path.includes("git/trees/")) return { truncated: false, tree: [
+      { path: "src/a.js", mode: "100644", type: "blob", sha: "1", size: 12 },
+      { path: ".github/workflows/release.yml", mode: "100644", type: "blob", sha: "2", size: 12 },
+      { path: "assets/large.bin", mode: "100644", type: "blob", sha: "3", size: 200_001 },
+      { path: "link.js", mode: "120000", type: "blob", sha: "4", size: 8 },
+      { path: "src/binary.dat", mode: "100644", type: "blob", sha: "5", size: 3 },
+    ] };
+    if (path.endsWith("git/blobs/1")) return { content: Buffer.from("const a = 1;\n").toString("base64"), encoding: "base64" };
+    if (path.endsWith("git/blobs/5")) return { content: Buffer.from([0, 1, 2]).toString("base64"), encoding: "base64" };
+    throw new Error(`Unexpected path ${path}`);
+  };
+  const files = await github.sources("org", "repo", sha);
+  assert.deepEqual({ ...files }, { "src/a.js": "const a = 1;\n" });
+  assert.equal(calls.filter(call => call.path.includes("git/blobs/")).length, 2);
+});
+test("truncated repository snapshots are rejected before blob downloads", async () => {
+  const { github, calls } = fixture();
+  github.request = async (path) => {
+    calls.push({ path, method: "GET", body: undefined });
+    return { truncated: true, tree: [] };
+  };
+  await assert.rejects(github.sources("org", "repo", sha), /supported size/);
+  assert.equal(calls.length, 1);
+});
+test("repository snapshots with more than 1,500 entries are rejected", async () => {
+  const { github, calls } = fixture();
+  github.request = async (path) => {
+    calls.push({ path, method: "GET", body: undefined });
+    return { truncated: false, tree: Array.from({ length: 1_501 }, (_, index) => ({
+      path: `src/file-${index}.js`, mode: "100644", type: "blob", sha: String(index), size: 1,
+    })) };
+  };
+  await assert.rejects(github.sources("org", "repo", sha), /supported size/);
+  assert.equal(calls.length, 1);
+});
