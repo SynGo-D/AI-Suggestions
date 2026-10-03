@@ -36,3 +36,15 @@ test("rejects traversal, configuration changes and malformed model output", () =
     assert.throws(() => parseEdits(raw));
   }
 });
+test("multiline replacements update offsets without changing surrounding code", () => {
+  const source = { "src/file.ts": "start();\noldA();\noldB();\nend();\n" };
+  const scoped: Finding[] = [{ id: "multi", file: "src/file.ts", line: 2, endLine: 3,
+    rule: "rewrite", severity: "warning", message: "Rewrite", onChangedLine: true }];
+  const result = applyEdits(source, scoped, ["multi"], [{ findingId: "multi", file: "src/file.ts",
+    startLine: 2, endLine: 3, expected: "oldA();\noldB();", replacement: "newA();\nnewB();\nnewC();" }]);
+  assert.equal(result.files["src/file.ts"], "start();\nnewA();\nnewB();\nnewC();\nend();\n");
+  assert.match(result.patch, /@@ -2,2 \+2,3 @@/);
+});
+test("edit parsing enforces the 100-edit resource limit", () => {
+  assert.throws(() => parseEdits(Array.from({ length: 101 }, () => edit(1))), /between 1 and 100 edits/);
+});
