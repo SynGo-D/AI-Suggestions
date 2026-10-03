@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { Databases } from "../src/database.ts";
 import type { Config } from "../src/config.ts";
 
-function fixture(options: { missingAnalysis?: boolean; missingDebt?: boolean } = {}) {
+function fixture(options: {
+  missingAnalysis?: boolean;
+  missingDebt?: boolean;
+  tooManyFindings?: boolean;
+  tooManyDebtRecords?: boolean;
+} = {}) {
   const databases = new Databases({ ANALYSIS_DATABASE_URL: "postgresql://example.invalid/analysis",
     DEBT_TABLE: "debt_records", DEBT_REPOSITORY_COLUMN: "repository", DEBT_PR_COLUMN: "pr",
     DEBT_COMMIT_COLUMN: "sha" } as Config);
@@ -13,9 +18,13 @@ function fixture(options: { missingAnalysis?: boolean; missingDebt?: boolean } =
     query: async (text: string, values: unknown[] = []) => {
       queries.push({ text, values });
       if (text.includes("FROM analysis_results")) return { rows: options.missingAnalysis ? [] : [{ result_id: "result-1", metrics: {} }] };
-      if (text.includes("FROM findings")) return { rows: [{ finding_id: "f1", file_path: "a.js", line: 1,
-        end_line: 1, rule_id: "no-var", severity: "warning", message: "Use const", metadata: {} }] };
-      if (text.includes('FROM "debt_records"')) return { rows: options.missingDebt ? [] : [{ score: 5 }] };
+      if (text.includes("FROM findings")) return { rows: options.tooManyFindings
+        ? Array.from({ length: 5_001 }, (_, index) => ({ finding_id: `f${index}`, file_path: "a.js", line: 1,
+          end_line: 1, rule_id: "no-var", severity: "warning", message: "Use const", metadata: {} }))
+        : [{ finding_id: "f1", file_path: "a.js", line: 1,
+          end_line: 1, rule_id: "no-var", severity: "warning", message: "Use const", metadata: {} }] };
+      if (text.includes('FROM "debt_records"')) return { rows: options.missingDebt ? []
+        : options.tooManyDebtRecords ? Array.from({ length: 1_001 }, () => ({ score: 5 })) : [{ score: 5 }] };
       return { rows: [] };
     }, release: () => { released = true; },
   })) as unknown as typeof databases.database.connect;
@@ -48,4 +57,19 @@ test("missing debt records never fabricate technical-debt context", async () => 
     assert.ok(queries.some(q => q.text === "ROLLBACK")); assert.ok(released());
   }
   finally { await databases.close(); }
+});
+test("finding limits fail closed and roll back before querying debt", async () => {
+  const { databases, queries, released } = fixture({ tooManyFindings: true });
+  try {
+    await assert.rejects(databases.load("org/repo", 7, "a".repeat(40)), /finding limit/);
+    assert.ok(queries.some(q => q.text === "ROLLBACK")); assert.ok(released());
+    assert.ok(!queries.some(q => q.text.includes('FROM "debt_records"')));
+  } finally { await databases.close(); }
+});
+test("technical-debt limits fail closed and roll back", async () => {
+  const { databases, queries, released } = fixture({ tooManyDebtRecords: true });
+  try {
+    await assert.rejects(databases.load("org/repo", 7, "a".repeat(40)), /row limit/);
+    assert.ok(queries.some(q => q.text === "ROLLBACK")); assert.ok(released());
+  } finally { await databases.close(); }
 });
