@@ -1,6 +1,20 @@
 import { z } from "zod";
 import type { Config } from "./config.ts";
 import { ServiceError } from "./errors.ts";
+
+/**
+ * What a role may do, as main-backend's requireCapability states it and
+ * the user manual publishes it. This service asks main-backend rather
+ * than deciding for itself: the roles live in integration-service's
+ * tables, and a second copy of that lookup here is a second thing to get
+ * wrong. The names match main-backend's capabilities exactly so a
+ * mismatch is a 403 to debug rather than a silent grant.
+ */
+const accessSchema = z.object({
+  roles: z.array(z.string()),
+  capabilities: z.record(z.string(), z.boolean()),
+});
+
 export class Authorizer {
   config: Config;
   constructor(config: Config) { this.config = config; }
@@ -15,13 +29,28 @@ export class Authorizer {
   async repository(owner: string, repo: string, number: number, bearer: string) {
     await this.request(`/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/analysis/pull-requests/${number}`, bearer);
   }
-  async merge(owner: string, repo: string, bearer: string) {
-    const memberships = z.array(z.object({ role: z.string(), organization: z.object({ id: z.string() }) })).parse(await this.request("/api/organizations", bearer));
-    for (const membership of memberships.filter(m => ["ADMIN", "MANAGER"].includes(m.role))) {
-      const integrations = z.array(z.object({ repositoryOwner: z.string(), repositoryName: z.string(), status: z.string() })).parse(
-        await this.request(`/api/integrations?organizationId=${encodeURIComponent(membership.organization.id)}`, bearer));
-      if (integrations.some(i => i.status === "ACTIVE" && i.repositoryOwner.toLowerCase() === owner.toLowerCase() && i.repositoryName.toLowerCase() === repo.toLowerCase())) return;
+  /** The capabilities the caller holds on this repository. */
+  async capabilities(owner: string, repo: string, bearer: string): Promise<Record<string, boolean>> {
+    const access = accessSchema.parse(
+      await this.request(`/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/access`, bearer));
+    return access.capabilities;
+  }
+  /**
+   * Requesting a fix and publishing it belong to developers and
+   * administrators. A manager runs the project; they do not put code in
+   * it, and this service writes a branch and a pull request.
+   */
+  async fix(owner: string, repo: string, bearer: string) {
+    const capabilities = await this.capabilities(owner, repo, bearer);
+    if (!capabilities.debtAndFixes) {
+      throw new ServiceError(403, "unauthorized", "Requesting and publishing AI fixes is for developers and administrators.");
     }
-    throw new ServiceError(403, "unauthorized", "A project manager or administrator must approve merging this fix.");
+  }
+  /** Confirming the merge, same two roles, checked at the moment it matters. */
+  async merge(owner: string, repo: string, bearer: string) {
+    const capabilities = await this.capabilities(owner, repo, bearer);
+    if (!capabilities.mergeFix) {
+      throw new ServiceError(403, "unauthorized", "Confirming a fix merge is for developers and administrators.");
+    }
   }
 }

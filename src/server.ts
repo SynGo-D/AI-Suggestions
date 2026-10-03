@@ -49,6 +49,7 @@ async function main() {
       if (req.url === "/jobs" && req.method === "POST") {
         const data = createSchema.parse(body);
         await auth.repository(data.owner, data.repository, data.pullRequestNumber, bearer);
+        await auth.fix(data.owner, data.repository, bearer);
         const result = await jobs.create(data.owner, data.repository, data.pullRequestNumber, data.headSha, data.selectedFindingIds);
         res.statusCode = result.duplicate ? 200 : 202; res.end(JSON.stringify(result)); return;
       }
@@ -72,6 +73,9 @@ async function main() {
         } finally { jobs.busy.delete(j.id); }
         res.end(JSON.stringify({ job: j })); return;
       }
+      // validate, publish and retry all move a fix towards a pull
+      // request, so they need the same capability as creating one.
+      await auth.fix(j.owner, j.repository, bearer);
       res.statusCode = 202;
       res.end(JSON.stringify({ job: jobs.action(j.id, match[2] as "validate" | "publish" | "retry") }));
     } catch (error) {
